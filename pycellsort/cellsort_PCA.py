@@ -8,14 +8,15 @@ from skimage.transform import resize
 from tifffile import imread
 from sklearn.decomposition import PCA
 from matplotlib import pyplot as plt
-ENABLE_TEMPORAL_SPATIAL_PCA = False
-def getAnotheSetOfPCs(X,PCs, eigenvalues):
-    scales = 1.0 / np.sqrt(eigenvalues)
-    anotherPCs = X @ ((PCs * scales.reshape(-1, 1)).T)
+ENABLE_onTime_daul_PCA: bool = False
+def dualPCAtransfer(X,PCs, single_values):
+    scales = (1.0 / single_values).reshape(1,-1)
+    anotherPCs = X @ (PCs.T * scales)
+    
     return anotherPCs.T
       
-def cellsortPCA(data:Path|str|np.ndarray,numPC:int, frameRange:Optional[Tuple[int,int]]=None, sizeShrink:Optional[float]=None, timeShrink:Optional[float]=None,outputdir:Optional[Path|str]=None,delFrame:Optional[List[int]]=None, logger:Logger=None)->Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    ## TODO 完善注释
+def cellsortPCA(data:Path|str|np.ndarray,numPC:int, frameRange:Optional[Tuple[int,int]]=None, sizeShrink:Optional[float]=None, timeShrink:Optional[float]=None,outputdir:Optional[Path|str]=None,delFrame:Optional[List[int]]=None, logger:Logger=None)->Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    ## TODO more detailed docstring
     """
     Docstring for cellsortPCA
     note: DFoF while not raise error, but still do NOT support data with negative values
@@ -41,7 +42,7 @@ def cellsortPCA(data:Path|str|np.ndarray,numPC:int, frameRange:Optional[Tuple[in
         - temporal_mean: shape (1, height*width)
         - spacial_mean: shape (frames after processing, 1), after deltaF/F0 normalization
 
-    :rtype: Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]
+    :rtype: Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]
     """
     ## TODO add input check here
     ## TODO create a shell logger if not provided
@@ -83,27 +84,30 @@ def cellsortPCA(data:Path|str|np.ndarray,numPC:int, frameRange:Optional[Tuple[in
     data_normalized = (data_2d - temporal_mean) / data_mean_dev # (T, pixelNum)
     spacial_mean = np.mean(data_normalized, axis=1, keepdims=True)
 
-    pca = PCA(n_components=numPC,copy=True, svd_solver='full') ## TODO 对实际数据，调整使用更高效的pca求解器
-    ## TODO matlab 实现考虑并检查了特征值是负值的情况？先不做实现
-    if T < pixelNum and ENABLE_TEMPORAL_SPATIAL_PCA:
+    pca = PCA(n_components=numPC,copy=True, svd_solver='full') ## TODO inefficient PCA may slow real data processing
+    ## TODO matlab implementation consider negative eigenvalues, maybe need to check sklearn PCA behavior
+    if T < pixelNum and ENABLE_onTime_daul_PCA:
+        print("PCA on time")
         logger.info("Performing PCA on data with less time points than pixels")
         logger.info("apply temporal covariance matrix")
         pca.fit(data_normalized.T)
         PCs = pca.components_ # (numPC,T)
         mixedsig = PCs # (numPC, T)
         eigenvalues = pca.explained_variance_ # (numPC,)
-        mixedfilters = getAnotheSetOfPCs(data_normalized.T, PCs, eigenvalues) # (numPC, pixelNum)
-        mixedfilters = mixedfilters.reshape((numPC, d1, d2)) # (numPC, d1, d2)
+        single_values = pca.singular_values_  # (numPC,)
+        mixedfilters = dualPCAtransfer(data_normalized.T, PCs, single_values) # (numPC, pixelNum)
+        # mixedfilters = mixedfilters.reshape((numPC, d1, d2)) # (numPC, d1, d2)
         covtrace = np.trace(pca.get_covariance()) / pixelNum
     else:
-        print("spatial PCA")
         logger.info("Performing PCA on data with less pixels than time points")
         logger.info("apply spatial covariance matrix")
         pca.fit(data_normalized)
         PCs = pca.components_ # (numPC,pixelNum)
         eigenvalues = pca.explained_variance_ # (numPC,)
-        mixedfilters = PCs.reshape((numPC, d1, d2)) # (numPC, d1, d2)
-        mixedsig = getAnotheSetOfPCs(data_normalized, PCs, eigenvalues) # (numPC, T)
+        single_values = pca.singular_values_  # (numPC,)
+        mixedfilters = PCs
+        # mixedfilters = PCs.reshape((numPC, d1, d2)) # (numPC, d1, d2)
+        mixedsig = dualPCAtransfer(data_normalized, PCs, single_values) # (numPC, T)
 
         covtrace = np.trace(pca.get_covariance()) / pixelNum
 
@@ -115,7 +119,7 @@ def cellsortPCA(data:Path|str|np.ndarray,numPC:int, frameRange:Optional[Tuple[in
                    
 CMP = plt.get_cmap('hot')
 FIGSIZE = (6, 6)
-def viewPCAResults(mixedfilters: np.ndarray, outputdir: Path | str):
+def viewPCAResults(mixedfilters: np.ndarray, outputdir: Path | str,packN:Optional[int]=None):
     """
     Paint all PCs as heatmaps and save to outputdir.
     :param mixedfilters: shape (numPC, height, width)
@@ -137,6 +141,23 @@ def viewPCAResults(mixedfilters: np.ndarray, outputdir: Path | str):
         fig.tight_layout()
         fig.savefig(str(fname), dpi=150)
         plt.close(fig)
+    if packN is not None and packN > 1:
+        R = np.floor(np.sqrt(packN)).astype(int)
+        C = np.ceil(packN / R).astype(int)
+        fig,axs = plt.subplots(R, C,figsize=FIGSIZE)
+        for i in range(R):
+            for j in range(C):
+                idx = i * C + j
+                ax = axs[i, j]
+                if idx < numPC:
+                    pc = mixedfilters[idx]
+                    img = ax.imshow(pc, cmap=CMP, aspect='equal')
+                    # ax.set_title(f"PC {idx+1}")
+                    ax.axis('off')
+                else:
+                    ax.axis('off')
+        fig.tight_layout()
+        fig.savefig(str(outdir / f"PCs_packed_{packN}.png"), dpi=300)
         
 
 def tiff_info(fn: Path | str) -> Tuple[int, int, int]:
@@ -151,8 +172,8 @@ def tiff_info(fn: Path | str) -> Tuple[int, int, int]:
     return h, w, nt
 
 
-## TODO 检查噪声定义
-## TODO 完善注释
+## TODO check noise definaition
+## TODO detailize docstring
 def plot_pc_spectrum(fn, cov_evals, pc_use=None, ax=None, show=True):
     """
     Python port of CellsortPlotPCspectrum(fn, CovEvals, PCuse)

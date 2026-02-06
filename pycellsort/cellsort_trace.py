@@ -11,9 +11,9 @@ from matplotlib import pyplot as plt
 from matplotlib.figure import Figure
 from scipy.stats import skew
 
-def getTraceByPlace(data: np.ndarray, segments:np.ndarray,frameRange:Optional[tuple[int, int]], baselineImage:Optional[np.ndarray]=None, byFrameCentered:Optional[bool]=True)->np.ndarray:
+def applyFilter(data: np.ndarray, segments:np.ndarray,frameRange:Optional[tuple[int, int]], baselineImage:Optional[np.ndarray]=None, byFrameCentered:Optional[bool]=True)->np.ndarray:
     """
-    Docstring for getTraceByPlace
+    Docstring for applyFilter
     
     :param data: in shape [number of frames, width, height]
     :type data: np.ndarray
@@ -28,3 +28,6 @@ def getTraceByPlace(data: np.ndarray, segments:np.ndarray,frameRange:Optional[tu
     :return: Description
     :rtype: ndarray
     """
+    
+
+
